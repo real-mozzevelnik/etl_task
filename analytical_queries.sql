@@ -3,19 +3,24 @@
 
 --Топ самых продаваемых категорий за период среди выбранных категорий
 WITH
-    p as (
+    p AS (
         SELECT
             category_name,
             product_id
         FROM products_categories FINAL
-        WHERE category_name in ('Category_958', 'Category_971', 'Category_791', 'Category_950', 'Category_964', 'Category_857', 'Category_948')
+        WHERE category_name IN ('Category_958', 'Category_971', 'Category_791', 'Category_950', 'Category_964', 'Category_857', 'Category_948')
+    ),
+    s AS (
+        SELECT
+            product_id
+        FROM sales
+        WHERE (date BETWEEN '2024-01-01' AND '2024-02-01') AND (product_id IN (SELECT product_id FROM p))
     )
 SELECT 
     p.category_name,
     count() AS total_sales_count
-FROM sales AS s
+FROM s
 INNER JOIN p ON s.product_id = p.product_id
-WHERE s.date BETWEEN '2024-01-01' AND '2024-02-01' 
 GROUP BY 1
 ORDER BY 2 DESC;
 
@@ -37,19 +42,25 @@ ORDER BY 2 DESC;
 
 --Топ категорий по рекламным вложениям за период среди выбранных категорий
 WITH
-    p as (
+    p AS (
         SELECT
             category_name,
             product_id
         FROM products_categories FINAL
-        WHERE category_name in ('Category_958', 'Category_971', 'Category_791', 'Category_950', 'Category_964', 'Category_857', 'Category_948')
+        WHERE category_name IN ('Category_958', 'Category_971', 'Category_791', 'Category_950', 'Category_964', 'Category_857', 'Category_948')
+    ),
+    a AS (
+        SELECT
+            product_id, 
+            advertising_amount
+        FROM ads
+        WHERE (date BETWEEN '2024-01-01' AND '2024-02-01') AND (product_id IN (SELECT product_id FROM p)) 
     )
 SELECT 
     p.category_name,
     sum(advertising_amount) AS advertising_amount_sum
-FROM ads AS a
+FROM a
 INNER JOIN p ON a.product_id = p.product_id
-WHERE a.date BETWEEN '2024-01-01' AND '2024-02-01' 
 GROUP BY 1
 ORDER BY 2 DESC;
 
@@ -72,32 +83,38 @@ ORDER BY 2 DESC;
 --Динамика по дням суммы проданных товаров, кол-ва проданных товаров, 
 --рекламных расходов и коэффициента конверсии рекламы в заказы за период среди выбранных категорий
 WITH
-    p as (
+    p AS (
         SELECT
             product_id
         FROM products_categories FINAL
-        WHERE category_name in ('Category_958', 'Category_971', 'Category_791', 'Category_950', 'Category_964', 'Category_857', 'Category_948')
+        WHERE category_name IN ('Category_958', 'Category_971', 'Category_791', 'Category_950', 'Category_964', 'Category_857', 'Category_948')
     ),
-    a as (
+    a AS (
         SELECT 
             date,
-            sum(advertising_amount) as advertising_amount_sum
+            sum(advertising_amount) AS advertising_amount_sum
         FROM ads
-        WHERE date BETWEEN '2024-01-01' AND '2024-01-15' 
-        AND product_id in p
+        WHERE (date BETWEEN '2024-01-01' AND '2024-01-15') AND (product_id IN p)
         GROUP BY date
+    ),
+    s AS (
+        SELECT 
+            date,
+            sum(sales_amount) AS sales_sum,
+            count() AS products_sold
+        FROM sales
+        WHERE (date BETWEEN '2024-01-01' AND '2024-01-15') AND (product_id IN p)
+        GROUP BY date
+            
     )
 SELECT 
     date,
-    sum(sales_amount) as sales_sum,
-    count() as products_sold,
-    any(advertising_amount_sum) as advertising_amount_sum,
-    products_sold / advertising_amount_sum as ads_to_cart_conversion_coefficient
-FROM sales as s
+    s.sales_sum,
+    s.products_sold,
+    a.advertising_amount_sum,
+    s.products_sold / a.advertising_amount_sum AS ads_to_cart_conversion_coefficient
+FROM s
 INNER JOIN a ON s.date = a.date
-WHERE s.product_id in p
-AND date BETWEEN '2024-01-01' AND '2024-01-15' 
-GROUP BY 1
 ORDER BY 1;
 
 -- +------------+-----------+---------------+---------------------+-------------------------------------+
@@ -116,33 +133,39 @@ ORDER BY 1;
 --Коэффициент корреляции Пирсона между суммой продаж и рекламными расходами 
 --по месяцам за период среди выбранных категорий
 WITH
-    p as (
+    p AS (
         SELECT
             product_id
         FROM products_categories FINAL
-        WHERE category_name in ('Category_958', 'Category_971', 'Category_791', 'Category_950', 'Category_964', 'Category_857', 'Category_948')
+        WHERE category_name IN ('Category_958', 'Category_971', 'Category_791', 'Category_950', 'Category_964', 'Category_857', 'Category_948')
     ),
-    a as (
+    a AS (
         SELECT 
             date,
-            sum(advertising_amount) as advertising_amount_sum
+            sum(advertising_amount) AS advertising_amount_sum
         FROM ads
-        WHERE date BETWEEN '2024-01-01' AND '2024-06-01' 
-        AND product_id in p
+        WHERE (date BETWEEN '2024-01-01' AND '2024-06-01') AND (product_id IN p)
         GROUP BY date
+    ),
+    s AS (
+        SELECT 
+            date,
+            sum(sales_amount) AS sales_sum
+        FROM sales
+        WHERE (date BETWEEN '2024-01-01' AND '2024-06-01') AND (product_id IN p)
+        GROUP BY date
+            
     )
 SELECT
-    toStartOfMonth(date) as month,
-    corr(toFloat32(sales), toFloat32(ads)) as correlation_coefficient
+    toStartOfMonth(date) AS month,
+    corr(toFloat32(sales_sum), toFloat32(advertising_amount_sum)) AS correlation_coefficient
 FROM (
     SELECT 
-        date,
-        sum(sales_amount) as sales, any(advertising_amount_sum) as ads
-    FROM sales as s
+        s.date,
+        s.sales_sum, 
+        a.advertising_amount_sum
+    FROM s
     INNER JOIN a ON s.date = a.date
-    WHERE s.product_id in p
-    AND date BETWEEN '2024-01-01' AND '2024-06-01' 
-    GROUP BY 1
 )
 GROUP BY 1
 ORDER BY 1;
@@ -185,7 +208,7 @@ SELECT
     s.orders_count AS orders_num,
     a.advertising_amount_sum
 FROM s
-LEFT JOIN a ON s.date = a.date
+INNER JOIN a ON s.date = a.date
 ORDER BY s.date;
 
 -- +------------+----------------+------------+---------------------+
